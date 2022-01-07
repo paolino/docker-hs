@@ -1,5 +1,6 @@
-{-# LANGUAGE ExplicitForAll      #-}
+
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Docker.Client.Api (
     -- * Containers
@@ -45,9 +46,10 @@ import           System.Exit            (ExitCode (..))
 import           Docker.Client.Http
 import           Docker.Client.Types
 import           Docker.Client.Utils
+import Control.Monad (void)
 
 requestUnit :: (MonadIO m, MonadMask m) => HttpVerb -> Endpoint -> DockerT m (Either DockerError ())
-requestUnit verb endpoint = fmap (const ()) <$> requestHelper verb endpoint
+requestUnit verb endpoint = void <$> requestHelper verb endpoint
 
 requestHelper :: (MonadIO m, MonadMask m) => HttpVerb -> Endpoint -> DockerT m (Either DockerError BSL.ByteString)
 requestHelper verb endpoint = requestHelper' verb endpoint Conduit.sinkLbs
@@ -58,25 +60,25 @@ requestHelper' verb endpoint sink = do
     case mkHttpRequest verb endpoint opts of
         Nothing ->
             return $ Left $ DockerInvalidRequest endpoint
-        Just request -> do
-            -- JP: Do we need runResourceT?
-            -- lift $ NHS.httpSink request $ \response ->
+        Just request ->
             lift $ httpHandler request $ \response ->
-                -- Check status code.
-                let status = responseStatus response in
-                case statusCodeToError endpoint status of
-                    Just err ->
-                        return $ Left err
-                    Nothing ->
-                        fmap Right sink
+            -- Check status code.
+            let status = responseStatus response in
+            case statusCodeToError endpoint status of
+                Just err ->
+                    return $ Left err
+                Nothing ->
+                    fmap Right sink
 
-parseResponse :: (FromJSON a, Monad m) => Either DockerError BSL.ByteString -> DockerT m (Either DockerError a)
+parseResponse :: (FromJSON a, MonadIO m) => Either DockerError BSL.ByteString -> DockerT m (Either DockerError a)
 parseResponse (Left err) =
     return $ Left err
 parseResponse (Right response) =
     -- Parse request body.
     case eitherDecode' response of
-        Left err ->
+        Left err -> do
+            -- debug' . decodeUtf8 . B.toStrict $ response
+            -- traverse_ (debug' . decodeUtf8 . B.toStrict) $ encodePretty @Value <$> decode' response
             return $ Left $ DockerClientDecodeError $ Text.pack err
         Right r ->
             return $ Right r
